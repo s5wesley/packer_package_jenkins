@@ -1,90 +1,135 @@
 #!/bin/bash
 
-###### Get the OS of the machine ################################################
-OS_NAME=$(cat /etc/*release |grep -w NAME |awk -F'"' '{print$2}')
+# Check if the user is root
+if [[ $(id -u) -ne 0 ]]; then 
+    echo "Sorry, you need to be root"
+    exit 1 
+fi 
 
-################   function to be executed if $OS_NAME=centos ###################
-function yum_os {
-  echo "This is $OS_NAME OS"
-  sleep 5
-  yum update -y 
-}
+# Checking OS type 
+TYPE=$(awk -F= '/^ID=/{print $2}' /etc/*rel* | head -n1)
 
-################  function to be executed if $OS_NAME=ubuntu #####################
-function apt_os {
-    echo "This is $OS_NAME OS"
-    sleep 5
-    ####### List of packages to install ########################################
-    packages=(
-        curl      
-        wget
-        apt-utils
-        vim
-        openssh-client
-        openssh-server
-        python3
-        nodejs
-        build-essential
-        npm
-        ansible
-        htop
-        watch
-        pip3 
-        git 
-        make
-        psql  
-        python3-pip 
-        openssl 
-        rsync 
-        jq 
-        postgresql-client 
-        mariadb-client 
-        mysql-client 
-        unzip 
-        tree 
-        default-jdk
-        default-jre
-        maven
-        gnupg
-        software-properties-common
-    )
+if [[ $TYPE != "ubuntu" ]]; then 
+    echo "Sorry, this script can only work on Ubuntu"
+    exit 1 
+fi 
 
-    # Update package list
-    sudo apt update -y
-    sudo apt upgrade -y
-    # Install packages
-    for package in "${packages[@]}"; do
-        echo "Installing $package Please wait ................."
-        sleep 3
-        sudo DEBIAN_FRONTEND=noninteractive apt install -y "$package"
-    done
-    echo "Package installation completed."
-}
+echo "Installing Jenkins agent... please wait"
+apt update -y
+apt install -y \
+    tree \
+    curl \
+    vim \
+    wget \
+    ansible \
+    openjdk-17-jdk \
+    ansible-lint \
+    maven \
+    git \
+    unzip \
+    openssl \
+    sshpass \
+    gnupg
 
-function jenkins_installation {
-    sudo apt update
-    ## Set vim as default text editor
-    sudo update-alternatives --set editor /usr/bin/vim.basic
-    sudo update-alternatives --set vi /usr/bin/vim.basic
-    sudo apt install fontconfig openjdk-17-jre -y
-    java -version
-    curl -fsSL https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key | sudo tee   /usr/share/keyrings/jenkins-keyring.asc > /dev/null
-    echo deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc]   https://pkg.jenkins.io/debian-stable binary/ | sudo tee   /etc/apt/sources.list.d/jenkins.list > /dev/null
-    sudo apt-get update
-    sudo apt-get install jenkins -y
-    sudo systemctl start jenkins
-    sudo systemctl enable jenkins
-}
+# Additional installations and configurations for Jenkins agent...
+ln -fs /usr/share/zoneinfo/America/New_York /etc/localtime
+apt-get install -y tzdata
+dpkg-reconfigure --frontend noninteractive tzdata
 
+git clone https://github.com/ahmetb/kubectx /usr/local/kubectx
+ln -s /usr/local/kubectx/kubectx /usr/local/bin/kubectx
+ln -s /usr/local/kubectx/kubens /usr/local/bin/kubens
 
-if [[ $OS_NAME == "Red Hat Enterprise Linux" ]] || [[ $OS_NAME == "CentOS Linux" ]] || [[ $OS_NAME == "Amazon Linux" ]] 
-then
-    yum_os
-elif [[ $OS_NAME == "Ubuntu" ]] 
-then
-    apt_os
-    jenkins_installation
-else
-    echo "HUMMMMMMMMMM. I don't know this OS"
-    exit
-fi
+curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+curl -LO "https://dl.k8s.io/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl.sha256"
+echo "$(cat kubectl.sha256)  kubectl" | sha256sum --check
+install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+chmod +x kubectl
+mkdir -p ~/.local/bin
+mv ./kubectl ~/.local/bin/kubectl
+
+useradd jenkins -m -d /home/jenkins -s /bin/bash
+useradd ansible -m -d /home/ansible -s /bin/bash
+echo 'jenkins ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/jenkins
+echo 'ansible ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/ansible
+
+curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+chmod +x /usr/local/bin/docker-compose
+mkdir -p /usr/local/lib/docker/cli-plugins
+curl -SL https://github.com/docker/compose/releases/download/v2.4.1/docker-compose-linux-x86_64 -o /usr/local/lib/docker/cli-plugins/docker-compose
+chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+
+apt-get remove docker docker-engine docker.io containerd runc -y
+apt-get update
+
+apt-get install -y \
+    ca-certificates \
+    curl \
+    gnupg \
+    lsb-release
+
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu \
+  $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+apt-get update
+
+apt-get install -y \
+    docker-ce \
+    docker-ce-cli \
+    containerd.io \
+    docker-compose-plugin
+
+apt update
+apt install -y \
+    apt-transport-https \
+    ca-certificates \
+    dnsutils \
+    htop \
+    iftop \
+    iotop \
+    iperf \
+    iputils-ping \
+    jq \
+    less \
+    locales \
+    ltrace \
+    man-db \
+    manpages \
+    mosh \
+    mtr \
+    netcat \
+    nethogs \
+    nfs-common \
+    pass \ 
+    psmisc \
+    python3-apt \
+    python3-docker \
+    rkhunter \
+    rsync \
+    screen \
+    ssl-cert \
+    strace \
+    tcpdump \
+    time \
+    traceroute \
+    unhide \
+    unzip \
+    uuid-runtime 
+
+chmod 666 /var/run/docker.sock
+usermod jenkins -aG docker
+usermod ansible -aG docker
+usermod ubuntu -aG docker 
+chmod 666 /var/run/docker.sock
+
+apt-get update && apt-get install -y gnupg software-properties-common curl
+curl -fsSL https://apt.releases.hashicorp.com/gpg | apt-key add -
+apt-add-repository "deb [arch=amd64] https://apt.releases.hashicorp.com $(lsb_release -cs) main"
+apt-get update && apt-get install -y terraform
+usermod jenkins -aG docker
+usermod ansible -aG docker
+
+echo "Jenkins agent installation completed."
